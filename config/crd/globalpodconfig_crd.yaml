@@ -1,0 +1,248 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: globalpodconfigs.config.example.com
+spec:
+  group: config.example.com
+  names:
+    kind: GlobalPodConfig
+    listKind: GlobalPodConfigList
+    plural: globalpodconfigs
+    singular: globalpodconfig
+    shortNames:
+      - gpc
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Selector
+          type: string
+          jsonPath: .spec.labelSelector
+        - name: Matched
+          type: integer
+          jsonPath: .status.matchedPods
+        - name: Updated
+          type: integer
+          jsonPath: .status.updatedPods
+        - name: LastSync
+          type: string
+          jsonPath: .status.lastSyncTime
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: ["spec"]
+          properties:
+            spec:
+              type: object
+              required: ["labelSelector", "podTemplate"]
+              properties:
+
+                labelSelector:
+                  type: object
+                  description: >
+                    Standard Kubernetes label selector. Pods matching this
+                    selector in ALL namespaces will be managed.
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Key/value pairs that must all match.
+                    matchExpressions:
+                      type: array
+                      items:
+                        type: object
+                        required: ["key", "operator"]
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [In, NotIn, Exists, DoesNotExist]
+                          values:
+                            type: array
+                            items:
+                              type: string
+
+                podTemplate:
+                  type: object
+                  description: >
+                    Desired state to enforce on matched pods.
+                    Only the fields present here are enforced; everything
+                    else on the pod is left untouched.
+                  properties:
+
+                    labels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Labels to merge onto the pod metadata.
+
+                    annotations:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: Annotations to merge onto the pod metadata.
+
+                    env:
+                      type: array
+                      description: >
+                        Env vars to inject into every container in the pod.
+                        Existing vars with the same name are overwritten.
+                      items:
+                        type: object
+                        required: ["name"]
+                        properties:
+                          name:
+                            type: string
+                          value:
+                            type: string
+                          valueFrom:
+                            type: object
+                            properties:
+                              secretKeyRef:
+                                type: object
+                                required: ["name", "key"]
+                                properties:
+                                  name:
+                                    type: string
+                                  key:
+                                    type: string
+                                  optional:
+                                    type: boolean
+                              configMapKeyRef:
+                                type: object
+                                required: ["name", "key"]
+                                properties:
+                                  name:
+                                    type: string
+                                  key:
+                                    type: string
+                                  optional:
+                                    type: boolean
+                              fieldRef:
+                                type: object
+                                required: ["fieldPath"]
+                                properties:
+                                  fieldPath:
+                                    type: string
+                                  apiVersion:
+                                    type: string
+
+                    resources:
+                      type: object
+                      description: Resource requirements to enforce on every container.
+                      properties:
+                        limits:
+                          type: object
+                          properties:
+                            cpu:
+                              type: string
+                            memory:
+                              type: string
+                        requests:
+                          type: object
+                          properties:
+                            cpu:
+                              type: string
+                            memory:
+                              type: string
+
+                    tolerations:
+                      type: array
+                      description: Tolerations to merge onto the pod spec.
+                      items:
+                        type: object
+                        properties:
+                          key:
+                            type: string
+                          operator:
+                            type: string
+                            enum: [Exists, Equal]
+                          value:
+                            type: string
+                          effect:
+                            type: string
+                            enum: [NoSchedule, PreferNoSchedule, NoExecute]
+                          tolerationSeconds:
+                            type: integer
+
+                    securityContext:
+                      type: object
+                      description: Pod-level security context to enforce.
+                      x-kubernetes-preserve-unknown-fields: true
+
+                evictionPolicy:
+                  type: object
+                  description: >
+                    Controls how the operator handles pods with immutable
+                    spec fields that need to change.
+                  properties:
+                    strategy:
+                      type: string
+                      enum: [Evict, Delete, Skip]
+                      default: Evict
+                      description: >
+                        Evict = use the Eviction API (respects PDBs).
+                        Delete = force-delete. Skip = log and do nothing.
+                    maxConcurrent:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                      default: 5
+                      description: Max pods to evict simultaneously.
+                    gracePeriodSeconds:
+                      type: integer
+                      minimum: 0
+                      default: 30
+
+                syncInterval:
+                  type: string
+                  default: "30s"
+                  description: >
+                    How often to run the full reconcile loop regardless of
+                    watch events. Parsed as a Go duration string (e.g. 30s, 5m).
+
+            status:
+              type: object
+              properties:
+                matchedPods:
+                  type: integer
+                  description: Total pods matched by the selector in last sync.
+                updatedPods:
+                  type: integer
+                  description: Pods patched or evicted in the last sync cycle.
+                skippedPods:
+                  type: integer
+                  description: Pods skipped due to evictionPolicy=Skip.
+                lastSyncTime:
+                  type: string
+                  format: date-time
+                observedGeneration:
+                  type: integer
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: ["type", "status"]
+                    properties:
+                      type:
+                        type: string
+                        enum: [Ready, Syncing, Degraded]
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time

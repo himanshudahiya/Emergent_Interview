@@ -1,0 +1,118 @@
+---
+# Example GlobalPodConfig — enforces env vars, resource limits, and a toleration
+# on every pod with the label app=nginx across all namespaces.
+apiVersion: config.example.com/v1alpha1
+kind: GlobalPodConfig
+metadata:
+  name: nginx-global-config   # cluster-scoped, no namespace
+spec:
+
+  # Select pods by label across all namespaces.
+  labelSelector:
+    matchLabels:
+      app: nginx
+
+  # Desired state to enforce on every matched pod.
+  podTemplate:
+
+    # Annotations to merge onto matched pods.
+    annotations:
+      config.example.com/managed-by: pod-config-operator
+      config.example.com/config-version: "v1"
+
+    # Env vars injected into every container (existing same-name vars overwritten).
+    env:
+      - name: LOG_LEVEL
+        value: "info"
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://otel-collector.observability:4317"
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+
+    # Resource requirements enforced on every container.
+    resources:
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+
+    # Tolerations merged onto the pod spec.
+    tolerations:
+      - key: "dedicated"
+        operator: Equal
+        value: "nginx"
+        effect: NoSchedule
+
+    # Pod-level security context.
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
+
+  # What to do when an immutable field must change.
+  evictionPolicy:
+    strategy: Evict          # Evict | Delete | Skip
+    maxConcurrent: 3         # Max pods evicted in parallel
+    gracePeriodSeconds: 30
+
+  # How often to run the full reconcile loop.
+  syncInterval: "30s"
+
+---
+# ClusterRole — minimum permissions for the operator.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-config-operator
+rules:
+  # Manage the CRD objects.
+  - apiGroups: ["config.example.com"]
+    resources: ["globalpodconfigs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["config.example.com"]
+    resources: ["globalpodconfigs/status"]
+    verbs: ["get", "update", "patch"]
+
+  # Read pods across all namespaces.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete", "create"]
+
+  # Create evictions (uses the policy API).
+  - apiGroups: ["policy"]
+    resources: ["evictions"]
+    verbs: ["create"]
+
+  # Needed by controller-runtime leader election.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pod-config-operator
+  namespace: pod-config-operator-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pod-config-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pod-config-operator
+subjects:
+  - kind: ServiceAccount
+    name: pod-config-operator
+    namespace: pod-config-operator-system
